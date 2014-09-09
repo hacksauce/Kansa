@@ -1,9 +1,14 @@
 ﻿<#
-Get-NetstatForeign24sStack.ps1
+.SYNOPSIS
+Get-NetstatStackForeignIpProcess.ps1
 Requires logparser.exe in path
-Pulls stack rank of Netstat connections aggregating 
-on Protocol, first three octets of ForeignAddress, 
-State, Component and Process
+
+Pulls stack rank of connections from netstat data based on 
+ForeignAddress and Process. 
+
+Assumes local network space is using 10/8 CIDR and looks for
+foreign addresses outside that range. See query for additional
+filtered IP ranges and processes.
 
 You may want to customize this a bit for
 your environment. If you're running web 
@@ -18,21 +23,17 @@ from the query...
 This script exepcts files matching the pattern 
 *netstat.tsv to be in the current working
 directory
+.NOTES
+DATADIR Netstat
 #>
 
 if (Get-Command logparser.exe) {
 
     $lpquery = @"
     SELECT
-        COUNT(Protocol,
-        substr(ForeignAddress, 0, last_index_of(ForeignAddress, '.')),
-        State,
-        Component,
-        Process) as Cnt,
-        Protocol,
-        substr(ForeignAddress, 0, last_index_of(ForeignAddress, '.')) as IP/24,
-        State,
-        Component,
+        COUNT(ForeignAddress,
+        Process) as ct,
+        ForeignAddress,
         Process
     FROM
         *netstat.tsv
@@ -43,16 +44,14 @@ if (Get-Command logparser.exe) {
         ForeignAddress not in ('*'; '0.0.0.0'; 
             '127.0.0.1'; '[::]'; '[::1]')
     GROUP BY
-        Protocol,
-        IP/24,
-        State,
-        Component,
+        ForeignAddress,
         Process
     ORDER BY
-        Cnt, Process desc
+        Process,
+        ct desc
 "@
 
-    & logparser -i:tsv -fixedsep:on -dtlines:0 -rtp:50 $lpquery
+    & logparser -stats:off -i:tsv -fixedsep:on -dtlines:0 -rtp:-1 $lpquery
 
 } else {
     $ScriptName = [System.IO.Path]::GetFileName($MyInvocation.ScriptName)
