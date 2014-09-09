@@ -4,7 +4,7 @@ Get-ARP.ps1 acquires arp table
 #>
 
 if (Get-Command Get-NetNeighbor) {
-    Get-NetNeighbor | Select InterfaceAlias,IPAddress,LinkLayerAddress,"N/A",RunspaceId,PSShowComputerName
+    Get-NetNeighbor
 } else {
     $IpPattern = "\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"
     foreach ($line in (& $env:windir\system32\arp.exe -a)) {
