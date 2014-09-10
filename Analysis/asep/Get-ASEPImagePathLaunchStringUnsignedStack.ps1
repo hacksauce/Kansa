@@ -1,4 +1,5 @@
 ﻿<#
+.SYNOPSIS
 Get-ASEPImagePathLaunchStringStack.ps1
 Requires logparser.exe in path
 Pulls frequency of autoruns based on ImagePath and LaunchString tuple where
@@ -6,6 +7,8 @@ for unsigned code and where the ImagePath is not 'File not found'
 
 This script expects files matching the pattern *autorunsc.txt to be in the
 current working directory.
+.NOTES
+DATADIR Autorunsc
 #>
 
 if (Get-Command logparser.exe) {
@@ -27,7 +30,7 @@ if (Get-Command logparser.exe) {
         ct ASC
 "@
 
-    & logparser -i:tsv -dtlines:0 -fixedsep:on -rtp:50 "$lpquery"
+    & logparser -stats:off -i:tsv -dtlines:0 -fixedsep:on -rtp:-1 "$lpquery"
 
 } else {
     $ScriptName = [System.IO.Path]::GetFileName($MyInvocation.ScriptName)

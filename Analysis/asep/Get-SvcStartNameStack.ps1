@@ -1,4 +1,5 @@
 ﻿<#
+.SYNOPSIS
 Get-SvcStartNameStack.ps1
 A basic stack for services aggregating on Caption and StartName.
 StartName tells you what account the service runs under.
@@ -12,6 +13,8 @@ the Pathnames are the same for both of them.
 
 Get-Autorunsc.ps1 output provides much of this same information,
 but it doesn't tell you the account a service will run under.
+.NOTES
+DATADIR SvcAll
 #>
 
 $data = $null

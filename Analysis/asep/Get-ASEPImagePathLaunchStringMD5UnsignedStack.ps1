@@ -1,4 +1,5 @@
 ﻿<#
+.SYNOPSIS
 Get-ASEPImagePathLaunchStringStack.ps1
 Requires logparser.exe in path
 
@@ -8,6 +9,8 @@ not 'File not found'
 
 This script expects files matching the *autorunsc.txt pattern to be in the
 current working directory.
+.NOTES
+DATADIR Autorunsc
 #>
 
 
@@ -33,7 +36,7 @@ if (Get-Command logparser.exe) {
         ct ASC
 "@
 
-    & logparser -i:tsv -dtlines:0 -fixedsep:on -rtp:50 "$lpquery"
+    & logparser -stats:off -i:tsv -dtlines:0 -fixedsep:on -rtp:-1 "$lpquery"
 
 } else {
     $ScriptName = [System.IO.Path]::GetFileName($MyInvocation.ScriptName)

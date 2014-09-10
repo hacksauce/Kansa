@@ -1,13 +1,10 @@
 ﻿<#
-Get-NetstatStackByProtoForeignIpStateComponentProcess.ps1
+.SYNOPSIS
+Get-NetstatStack.ps1
 Requires logparser.exe in path
-
-Pulls stack rank of connections from netstat data based on 
-Protocol, ForeignAddress, State, Component and Process. 
-Assumes local network space is using 10/8 CIDR and looks for
-foreign addresses outside that range. See query for additional
-filtered IP ranges and processes.
-
+Pulls stack rank of Netstat connections
+based on local and foreign address (no
+ports) and processes.
 
 You may want to customize this a bit for
 your environment. If you're running web 
@@ -22,6 +19,8 @@ from the query...
 This script exepcts files matching the pattern 
 *netstat.tsv to be in the current working
 directory
+.NOTES
+DATADIR Netstat
 #>
 
 if (Get-Command logparser.exe) {
@@ -29,13 +28,17 @@ if (Get-Command logparser.exe) {
     $lpquery = @"
     SELECT
         COUNT(Protocol,
+        LocalAddress,
         ForeignAddress,
         State,
+        ConPId,
         Component,
         Process) as ct,
         Protocol,
+        LocalAddress,
         ForeignAddress,
         State,
+        ConPid,
         Component,
         Process
     FROM
@@ -48,8 +51,10 @@ if (Get-Command logparser.exe) {
             '127.0.0.1'; '[::]'; '[::1]')
     GROUP BY
         Protocol,
+        LocalAddress,
         ForeignAddress,
         State,
+        ConPid,
         Component,
         Process
     ORDER BY
@@ -57,7 +62,7 @@ if (Get-Command logparser.exe) {
         ct desc
 "@
 
-    & logparser -i:tsv -fixedsep:on -dtlines:0 -rtp:50 $lpquery
+    & logparser -stats:off -i:tsv -fixedsep:on -dtlines:0 -rtp:-1 $lpquery
 
 } else {
     $ScriptName = [System.IO.Path]::GetFileName($MyInvocation.ScriptName)

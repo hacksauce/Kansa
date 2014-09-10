@@ -1,17 +1,40 @@
-﻿# OUTPUT TXT
-# Get-UserAssist.ps1 retrieves UserAssist data from ntuser.dat hives
-# Doesn't current retrieve the count, but I'm working on that
-# Doesn't currently work against locked hives, but there may be a work-around for this
+﻿<#
+.SYNOPSIS
+Get-LogUserAssist.ps1 retrieves UserAssist data from ntuser.dat hives
+Retrieves "count" from value data, but on my Win8.1 system count does 
+not appear to be incremented consistently.
+Retrieves data from locked hives for logged on users, by finding their
+hives in HKEY_USERS
 
-foreach($userpath in (Get-WmiObject win32_userprofile | Select-Object -ExpandProperty localpath)) { 
+.NOTES
+Next line is required by kansa.ps1 for handling this scripts output.
+OUTPUT TSV
+#>
+
+[CmdletBinding()]
+Param()
+foreach($user in (Get-WmiObject win32_userprofile)) { 
+    $userpath = $user.localpath
+    $usersid  = $user.SID
+    Write-Verbose "`$userpath : $userpath"
+    Write-Verbose "`$usersid  : $usersid"
+
+    # Begin massive ScriptBlock
+    # In order to unload loaded hives using reg.exe, we have to spin up a separate process for reg load
+    # do our processing and then exit that process, then the calling process, this script, can call 
+    # reg unload successfully
     $sb = {
 Param(
 [Parameter(Mandatory=$True,Position=0)]
-    [String]$userpath
+    [String]$userpath,
+[Parameter(Mandatory=$True,Position=1)]
+    [String]$usersid
 )
 
+
 <#
-The next section of code was found in Microsoft's TechNet Gallery at:
+The next section of code makes Key LastWriteTime property accessible to Powershell and 
+was found in Microsoft's TechNet Gallery at:
 http://gallery.technet.microsoft.com/scriptcenter/Get-Last-Write-Time-and-06dcf3fb#content
 Contributed by Rohn Edwards
 
@@ -67,7 +90,7 @@ Update-TypeData -TypeName Microsoft.Win32.RegistryKey -MemberType ScriptProperty
         $this.Handle,
         $null,       # ClassName
         [ref] 0,     # ClassNameLength
-        $null,  # Reserved
+        $null,       # Reserved
         [ref] $null, # SubKeyCount
         [ref] $null, # MaxSubKeyNameLength
         [ref] $null, # MaxClassLength
@@ -83,13 +106,15 @@ Update-TypeData -TypeName Microsoft.Win32.RegistryKey -MemberType ScriptProperty
     }
     else {
         # Return datetime object:
-        [datetime]::FromFileTime($LastWriteTime)
+        # modified by Dave Hull to return ISO formatted timestamp
+        Get-Date([datetime]::FromFileTimeUtc($LastWriteTime)) -Format yyyyMMddThh:mm:ss
     }
 }
 <# End MS Limited Public Licensed code #>
 
 function rot13 {
 # Returns a Rot13 string of the input $value
+# UserAssist keys are Rot13 encoded
 # May not be the most efficient way to do this
 Param(
 [Parameter(Mandatory=$True,Position=0)]
@@ -116,38 +141,104 @@ Param(
     $newvalue -join ""
 }
 
-if ($regexe = Get-Command Reg.exe | Select-Object -ExpandProperty path) { 
-    if (Test-Path($userpath + "\ntuser.dat")) {
-        "$userpath has an ntuser.dat file... attempting to load"
-        $regload = & $regexe load "hku\KansaTempHive" "$userpath\ntuser.dat"
-        if ($regload -notmatch "ERROR") {
-            "$userpath loaded."
-            Set-Location "Registry::HKEY_USERS\KansaTempHive\Software\Microsoft\Windows\CurrentVersion\Explorer\"
-            if (Test-Path("UserAssist")) {
-                "UserAssist found."
-                foreach ($line in (ls "UserAssist" -Recurse)) {
-                    $uavalue = ($line | select -ExpandProperty property | out-string)
-                    $lastwrt = $line | select -ExpandProperty LastWriteTime
-                    if (!($uavalue -match "Version")) {
-                        $rot13uav = rot13 $uavalue
-                    }
-                    $lastwrt
-                    $rot13uav
+function Get-RegKeyValueNData {
+# Returns values and data for Registry keys
+# http://blogs.technet.com/b/heyscriptingguy/archive/2012/05/11/use-powershell-to-enumerate-registry-property-values.aspx
+Param(
+    [Parameter(Mandatory=$True,Position=0)]
+        [String]$Path
+)
+    Push-Location
+    Set-Location -Path "Registry::$Path"
+    Get-Item . | Select-Object -ExpandProperty Property | 
+    Foreach-Object {
+        New-Object psobject -Property @{"property" = $_;
+            "value" = (Get-ItemProperty -Path . -Name $_).$_
+        }
+    }
+    Pop-Location
+}
+
+function Get-RegKeyLastWriteTime {
+Param(
+    [Parameter(Mandatory=$True,Position=0)]
+        [String]$Path
+)
+    Get-ChildItem "Registry::$Path" | Select-Object -ExpandProperty LastWriteTime
+}
+
+function Get-UserAssist {
+Param(
+[Parameter(Mandatory=$True,Position=0)]
+    [String]$regpath,
+[Parameter(Mandatory=$True,Position=1)]
+    [String]$userpath,
+[Parameter(Mandatory=$True,Position=2)]
+    [String]$useracct
+)
+    Set-Location $regpath
+    if (Test-Path("UserAssist")) {
+        foreach ($key in (Get-ChildItem "UserAssist")) {
+            $o = "" | Select-Object UserAcct, UserPath, Subkey, KeyLastWriteTime, Value, Count
+            $o.UserAcct = $useracct
+            $o.UserPath = $userpath
+            $o.KeyLastWriteTime = Get-RegKeyLastWriteTime $key
+            $subkey = ($key.Name + "\Count")
+            $o.Subkey = ("SOFTWARE" + ($subkey -split "SOFTWARE")[1])
+            foreach($item in (Get-RegKeyValueNData -Path $subkey)) {
+                # Run count, little endian bytes 4-7
+                [byte[]] $bytearray = (($item.value)[4..4])
+                [System.Array]::Reverse($bytearray)
+                $o.Count = $($bytearray)
+                $o.Value = (rot13 $item.property)
+                if ($o.Value.StartsWith("UEME_")) {
+                    # Don't return the UEME values
+                    continue
+                } else {
+                    $o
                 }
-            } else {
-                "No UserAssist found for $userpath."
             }
-        } else {
-            "Could not load $userpath."
         }
     }
 }
-}
 
-    $Job = Start-Job -ScriptBlock $sb -ArgumentList $userpath
-    $suppress = Wait-Job $Job 
-    $Recpt = Receive-Job $Job
+if ($regexe = Get-Command Reg.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path) {
+    if (Test-Path($userpath + "\ntuser.dat") -ErrorAction SilentlyContinue) {
+        # Get the account name
+        $objSID   = New-Object System.Security.Principal.SecurityIdentifier($usersid)
+        $useracct = $objSID.Translate([System.Security.Principal.NTAccount])
+
+        $regload = & $regexe load "hku\KansaTempHive" "$userpath\ntuser.dat"
+        if ($regload -notmatch "ERROR") {
+            Get-UserAssist "Registry::HKEY_USERS\KansaTempHive\Software\Microsoft\Windows\CurrentVersion\Explorer\" $userpath $useracct
+        } else {
+            # Could not load $userpath, probably because the user is logged in.
+            # There's more than one way to skin the cat, cat doesn't like any of them.
+            $uapath  = "Registry::HKEY_USERS\$usersid\Software\Microsoft\Windows\CurrentVersion\Explorer\"
+            Get-UserAssist $uapath $userpath $useracct
+
+<# Leaving this code in, as it may come in handy one day for something else, it was made obsolete by pulling $usersid
+            foreach($SID in (ls Registry::HKU | Select-Object -ExpandProperty Name)) {
+                if ($SID -match "_Classes") {
+                    $SID = (($SID -split "HKEY_USERS\\") -split "_Classes") | ? { $_ }
+                    $objSID = New-Object System.Security.Principal.SecurityIdentifier($SID)
+                    $objUser = $objSID.Translate([System.Security.Principal.NTAccount])
+                    if ($objUser -match $user) {
+                        $uapath = "Registry::HKEY_USERS\$SID\Software\Microsoft\Windows\CurrentVersion\Explorer\"
+                        Get-UserAssist $uapath $user
+                    }
+                }
+            }
+#>
+        }
+    }
+}
+} # End big ScriptBlock
+
+    $Job = Start-Job -ScriptBlock $sb -ArgumentList $userpath, $usersid
+    $suppress = Wait-Job $Job  
+    $Recpt = Receive-Job $Job -ErrorAction SilentlyContinue
     $Recpt
     $ErrorActionPreference = "SilentlyContinue"
-    & reg.exe unload "hku\KansaTempHive" 2>&1 
+    $suppress = & reg.exe unload "hku\KansaTempHive" 2>&1 
 }
